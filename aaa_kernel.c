@@ -33,7 +33,7 @@ static ssize_t my_read(struct file* filp, char* buffer, size_t count, loff_t* po
 static ssize_t my_write(struct file* file, const char __user* buffer, size_t count, loff_t* ppos)
 {
   printk(KERN_INFO "Using write() function of aaa_kernel module\n");
-  return 0;
+  return count;
 }
 
 static const struct file_operations my_fops = {
