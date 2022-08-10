@@ -84,12 +84,21 @@ static ssize_t my_write(struct file* file, const char __user* buffer, size_t cou
   return count;
 }
 
+int my_mmap (struct file* file, struct vm_area_struct * vma)
+{
+  // vma->vm_start = (unsigned long)(pipeBuffer);
+  // vma->vm_end = (unsigned long)(pipeBuffer + bufferSize);
+
+  return 0;
+}
+
 static const struct file_operations my_fops = {
     .owner   = THIS_MODULE,
     .open    = my_open,
     .read    = my_read,
     .write   = my_write,
     .release = my_close,
+    .mmap = my_mmap,
 };
 
 struct miscdevice pipe_device = {
@@ -124,7 +133,10 @@ static void __exit hello_end(void)
 {
   printk(KERN_INFO "Goodbye Mr.\n");
 
+  kfree(pipeBuffer);
+	printk(KERN_NOTICE "SUCCESSFULLY FREED NUMPIPE buffer\n");
   misc_deregister(&pipe_device);
+	printk(KERN_NOTICE "SUCCESSFULLY DEREGISTERED NUMPIPE  misc device\n");
 }
 
 module_init(hello_start);
