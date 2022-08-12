@@ -19,6 +19,28 @@ static int bufferSize;
 static int currentReadIndex = 0;
 static int currentWriteIndex = 0;
 
+enum { BUFFER_SIZE = 4 };
+
+struct mmap_info {
+	char *data;
+};
+
+
+/* First page access. */
+static vm_fault_t vm_fault(struct vm_fault *vmf)
+{
+	struct page *page;
+	struct mmap_info *info;
+
+	pr_info("vm_fault\n");
+	info = (struct mmap_info *)vmf->vma->vm_private_data;
+	if (info->data) {
+		page = virt_to_page(info->data);
+		get_page(page);
+		vmf->page = page;
+	}
+	return 0;
+}
 
 /* Declarations for command line arguements to be passed to module
 	The module_param() macro takes 3 arguments: the name of the variable,
@@ -27,10 +49,31 @@ static int currentWriteIndex = 0;
 */
 module_param(bufferSize, int, 0000);
 
-static int my_open(struct inode* inode, struct file* file)
+static int my_open(struct inode* inode, struct file* filp)
 {
-  printk(KERN_INFO "Opened aaa_kernel misc char device\n");
-  return 0;
+  // printk(KERN_INFO "Opened aaa_kernel misc char device\n");
+  // return 0;
+  struct mmap_info *info;
+
+	pr_info("open\n");
+	info = kmalloc(sizeof(struct mmap_info), GFP_KERNEL);
+	// pr_info("virt_to_phys = 0x%llx\n", (unsigned long long)virt_to_phys((void *)info));
+	info->data = (char *)get_zeroed_page(GFP_KERNEL);
+	memcpy(info->data, "asdf", BUFFER_SIZE);
+	filp->private_data = info;
+	return 0;
+}
+
+static int release(struct inode *inode, struct file *filp)
+{
+	struct mmap_info *info;
+
+	pr_info("release\n");
+	info = filp->private_data;
+	free_page((unsigned long)info->data);
+	kfree(info);
+	filp->private_data = NULL;
+	return 0;
 }
 
 static int my_close(struct inode* inodep, struct file* filp)
@@ -90,6 +133,7 @@ void my_vma_open(struct vm_area_struct *vma)
   printk(KERN_NOTICE "My VMA open, virt %lx, phys %lx\n",
     vma->vm_start, vma->vm_pgoff << PAGE_SHIFT);
 }
+
 void my_vma_close(struct vm_area_struct *vma)
 {
   printk(KERN_NOTICE "My VMA close.\n");
@@ -99,73 +143,64 @@ static struct vm_operations_struct my_vm_ops =
 {
     .open = my_vma_open,
     .close = my_vma_close,
+    .fault = vm_fault,
 };
 
-int my_mmap (struct file* file, struct vm_area_struct * vma)
+static int my_mmap(struct file *filp, struct vm_area_struct *vma)
 {
-  // vma->vm_start = (unsigned long)(pipeBuffer);
-  // vma->vm_end = (unsigned long)(pipeBuffer + bufferSize);
-
-  // printk(KERN_NOTICE "BEFORE VMA open, virt %lx, phys %lx\n",
-  //   vma->vm_start, vma->vm_pgoff << PAGE_SHIFT);
-
-  // int ret = remap_pfn_range(vma, vma->vm_start, vma->vm_pgoff,
-  //   vma->vm_end - vma->vm_start,
-  //   vma->vm_page_prot);
-
-  // if (ret < 0)
-  // {
-  //   printk(KERN_ERR "remap_pfn_range failed, ret: %d\n", ret);
-  // }
-  // else
-  // {
-  //   printk(KERN_NOTICE "remap_pfn_range success, ret: %d\n", ret);
-  // }
-
-  // vma->vm_ops = &my_vm_ops;
-  // my_vma_open(vma);
-
-    int ret = 0;
-    struct page *page = NULL;
-    unsigned long size = (vma->vm_end - vma->vm_start);
-
-    if (size <= 0) {
-      return -EINVAL; 
-    } 
-
-    printk(KERN_NOTICE "size: %lu\n", size);
-
-    uintptr_t pipeBuffer2 = (uintptr_t)pipeBuffer;
-
-    printk(KERN_NOTICE "pipeBuffer: %p, pipeBuffer2: %lx, (*int)pipeBuffer2: %p, *int)pipeBuffer3: %lx, \n",
-      pipeBuffer, pipeBuffer2, (int*)(pipeBuffer2), (int*)(pipeBuffer2));
-
-    printk(KERN_NOTICE "pipeBuffer2 << PAGE_SHIFT: %lx\n", pipeBuffer2 << PAGE_SHIFT);
-
-    // page = virt_to_page((unsigned long)pipeBuffer + (vma->vm_pgoff << PAGE_SHIFT));
-    page = virt_to_page((pipeBuffer2 << PAGE_SHIFT));
-    
-    printk(KERN_NOTICE "vm_start %lx, vm_end %lx, vm_pgoff: %lx, phys %lx\n",
-      vma->vm_start, vma->vm_end, vma->vm_pgoff, vma->vm_pgoff << PAGE_SHIFT);
-    printk(KERN_NOTICE "pipeBuffer: %p, ULpipeBuffer: %lx, uintptr_t_pipeBuffer: %lx, page: %p\n",
-      pipeBuffer, (unsigned long)pipeBuffer, (uintptr_t)pipeBuffer, page);
-
-    ret = remap_pfn_range(vma, vma->vm_start, page_to_pfn(page), size, vma->vm_page_prot);
-    if (ret < 0)
-    {
-      printk(KERN_ERR "remap_pfn_range failed, ret: %d\n", ret);
-    }
-    else
-    {
-      printk(KERN_NOTICE "remap_pfn_range success, ret: %d\n", ret);
-    }
-
-  return ret;
+	pr_info("mmap\n");
+	vma->vm_ops = &my_vm_ops;
+	vma->vm_flags |= VM_DONTEXPAND | VM_DONTDUMP;
+	vma->vm_private_data = filp->private_data;
+	my_vma_open(vma);
+	return 0;
 }
+
+// int my_mmap (struct file* file, struct vm_area_struct * vma)
+// {
+//   // vma->vm_ops = &my_vm_ops;
+//   // my_vma_open(vma);
+
+//     int ret = 0;
+//     struct page *page = NULL;
+//     unsigned long size = (vma->vm_end - vma->vm_start);
+
+//     if (size <= 0) {
+//       return -EINVAL; 
+//     } 
+
+//     printk(KERN_NOTICE "size: %lu\n", size);
+
+//     uintptr_t pipeBuffer2 = (uintptr_t)pipeBuffer;
+
+//     printk(KERN_NOTICE "pipeBuffer: %p, pipeBuffer2: %lx, (*int)pipeBuffer2: %p, *int)pipeBuffer3: %lx, \n",
+//       pipeBuffer, pipeBuffer2, (int*)(pipeBuffer2), (int*)(pipeBuffer2));
+
+//     page = virt_to_page((unsigned long)pipeBuffer + (vma->vm_pgoff << PAGE_SHIFT));
+//     // page = virt_to_page((pipeBuffer2 << PAGE_SHIFT));
+    
+//     printk(KERN_NOTICE "vm_start %lx, vm_end %lx, vm_pgoff: %lx, phys %lx\n",
+//       vma->vm_start, vma->vm_end, vma->vm_pgoff, vma->vm_pgoff << PAGE_SHIFT);
+//     printk(KERN_NOTICE "pipeBuffer: %p, ULpipeBuffer: %lx, uintptr_t_pipeBuffer: %lx, page: %p\n",
+//       pipeBuffer, (unsigned long)pipeBuffer, (uintptr_t)pipeBuffer, page);
+
+//     ret = remap_pfn_range(vma, vma->vm_start, page_to_pfn(page), size, vma->vm_page_prot);
+//     if (ret < 0)
+//     {
+//       printk(KERN_ERR "remap_pfn_range failed, ret: %d\n", ret);
+//     }
+//     else
+//     {
+//       printk(KERN_NOTICE "remap_pfn_range success, ret: %d\n", ret);
+//     }
+
+//   return ret;
+// }
 
 static const struct file_operations my_fops = {
     .owner   = THIS_MODULE,
     .open    = my_open,
+    .release = release,
     .read    = my_read,
     .write   = my_write,
     .release = my_close,
