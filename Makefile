@@ -9,3 +9,6 @@ clean:
 
 modules_install:
 	${MAKE} -C ${KERNEL_SRC} M=$(PWD) modules_install
+
+test:
+	make -C /lib/modules/$(shell uname -r)/build/ M=$(PWD) modules
